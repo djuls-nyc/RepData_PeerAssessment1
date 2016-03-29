@@ -8,18 +8,118 @@ output:
 
 ## Loading and preprocessing the data
 
+Let's load the Activity Monitoring Device (AMD) dataset and have a look at it :
 
+```{r, echo=TRUE}
+# NOTE: We assume the data is unzipped in the same location as the Rmd file.
+AMDdata <- read.csv("activity.csv", stringsAsFactors = FALSE, na.strings = "NA")
+str(AMDdata)
+head(table(AMDdata$date))
+length(table(AMDdata$date))
+head(table(AMDdata$interval))
+tail(table(AMDdata$interval))
+```
+
+The dataset  has 3 variables:  
+- steps is an integer;  
+- date is encoded in strings and will converted in date-time format;  
+- interval is an integer. It' s actually the time when the 5-min interval starts, encoded as HHMM. We might have to convert to hours or minutes later on.  
+
+The data spans 61 days, and 288 5-min intervals per day (so the whole 24 hours).
+
+```{r, echo=TRUE}
+library(lubridate)
+AMDdata$date <- ymd(AMDdata$date)
+```
 
 ## What is mean total number of steps taken per day?
 
+Let's first calculate the total number of steps for each day, and then calculate the mean and median.
+We will discard the observations having NAs.
+```{r, echo=TRUE}
+dailySteps <- aggregate(steps~date, AMDdata[complete.cases(AMDdata),], sum)
+dailyStepsMean <- mean(dailySteps$steps)
+dailyStepsMedian <- median(dailySteps$steps)
+c(dailyStepsMean, dailyStepsMedian)
+```
 
+Let's show the data with an histogram, and show the median with a red line:
+```{r, echo=TRUE}
+hist(dailySteps$steps, breaks=10, main="Total Daily Steps", 
+     xlab="Number of Steps", xlim=c(0, 25000), col="steelblue")
+abline(v=dailyStepsMedian, lwd=3, col="red")
+```
+  
+It' s worth noting the 2 days above 20,000 steps.
 
 ## What is the average daily activity pattern?
-
-
+We will compute the average number of steps for each interval, averaged accross the days. We will discard the observations with missing values, and convert the interval integer into hours to make more sense of it when we plot.
+```{r, echo=TRUE}
+ivalSteps <- aggregate(steps~interval, AMDdata[complete.cases(AMDdata),], mean)
+ivalSteps$hours <- (ivalSteps$interval %/% 100) + (ivalSteps$interval %% 100)/60
+with(ivalSteps, plot(x=hours, y=steps, type="l", main="Daily Activity Pattern (5min interval)", xlab="Hour of the day", ylab="Number of Steps"))
+```
 
 ## Imputing missing values
+First, let's check what is missing:
+```{r, echo=TRUE}
+sum(is.na(AMDdata$steps))
+sum(is.na(AMDdata$date))
+sum(is.na(AMDdata$interval))
+```
+We only need to fix the 2,304 NA values in steps. We will input the mean for the relevant 5-min interval. 
+```{r, echo=TRUE}
+missing <- is.na(AMDdata$steps) # boolean
+# for each missing steps value 
+#      => get the matching interval index in ivalSteps
+idx  <- sapply(AMDdata[missing, ]$interval, 
+               function(x) which(ivalSteps$interval == x))
+# copy non-missing...
+impData <- AMDdata
+# ...and imputed data in impData
+impData[missing,]$steps <- ivalSteps$steps[idx]
+```
 
-
+Let's have a look at the effect of imputing missing values on the mean and the median, comparing to the previous values:
+```{r, echo=TRUE}
+impDailySteps <- aggregate(steps~date, impData, sum)
+impDailyStepsMean <- mean(impDailySteps$steps)
+impDailyStepsMedian <- median(impDailySteps$steps)
+c(impDailyStepsMean, impDailyStepsMedian)
+c(dailyStepsMean, dailyStepsMedian)
+```
+It looks like both the new mean and median have converged to the previous mean. Since the new and previous mean looks the same, we can hypothetize that whole days were missing, so adding "average days" didn't change anything. Let's prove this:
+```{r, echo=TRUE}
+table(AMDdata[is.na(AMDdata$steps),]$date)
+```
+8 full days were missing. As far as the median is concerned, since we added 8 average days slightly above the original median, it has moved up circa 4 observations with a high probability of landing on one the 8 added days.  
+  
+Now let's plot the histogram for the corrected data:
+```{r, echo=TRUE}
+hist(impDailySteps$steps, breaks=10, main="Total Daily Steps", 
+     xlab="Number of Steps", xlim=c(0, 25000), col="steelblue")
+abline(v=impDailyStepsMedian, lwd=3, col="red")
+```
+  
+We can see that the central cell is much higher than without imputing missing data (8 more observations).
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+```{r, echo=TRUE}
+impData$weekday <- as.factor(sapply(wday(impData$date),
+                                    function(x) { if (x==1|x==7) "weekend" else "weekday" } ))
+
+ivalStepsW <- aggregate(steps~interval+weekday, impData, mean)
+ivalStepsW$hours <- (ivalStepsW$interval %/% 100) + (ivalStepsW$interval %% 100)/60
+library(lattice)
+impData$weekday <- as.factor(sapply(wday(impData$date),
+                                    function(x) { if (x==1|x==7) "weekend" else "weekday" } ))
+
+ivalStepsW <- aggregate(steps~interval+weekday, impData, mean)
+ivalStepsW$hours <- (ivalStepsW$interval %/% 100) + (ivalStepsW$interval %% 100)/60
+library(lattice)
+with(ivalStepsW, xyplot(steps~hours|weekday, type="l", layout=c(1,2),
+                        main="Daily Activity Pattern (5min interval)",
+                        xlab="Hour of the day", ylab="Number of Steps"))
+```
+
